@@ -56,7 +56,7 @@ func ChannelCreate(channel *model.Channel, ctx context.Context) error {
 
 // ChannelUpdate 更新请求中明确提供的渠道字段并刷新缓存。
 func ChannelUpdate(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channel, error) {
-	_, ok := channelCache.Get(req.ID)
+	oldChannel, ok := channelCache.Get(req.ID)
 	if !ok {
 		return nil, fmt.Errorf("channel not found")
 	}
