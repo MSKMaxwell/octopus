@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -22,6 +23,42 @@ import (
 var requestIDs atomic.Uint64 // requestIDs 分配进程内严格递增的请求 ID。
 var errNoActiveChannel = errors.New("no active channel") // errNoActiveChannel 表示分组尚未选择活动渠道。
 
+// orderGroupCandidates 返回分组尝试顺序：手动活动项优先，其余按 Priority 升序（并列按 ID），
+// 实现目标2"依次尝试分组内各渠道模型"。
+func orderGroupCandidates(group model.Group) []model.GroupItem {
+	if len(group.Items) == 0 {
+		return nil
+	}
+	// 按 Priority ASC, ID ASC 排序全部
+	sorted := make([]model.GroupItem, len(group.Items))
+	copy(sorted, group.Items)
+	slices.SortFunc(sorted, func(a, b model.GroupItem) int {
+		if a.Priority != b.Priority {
+			return a.Priority - b.Priority
+		}
+		return a.ID - b.ID
+	})
+	if group.ActiveItemID == 0 {
+		return sorted
+	}
+	// 活动项放首位，其余保持排序
+	activeIdx := -1
+	for i, item := range sorted {
+		if item.ID == group.ActiveItemID {
+			activeIdx = i
+			break
+		}
+	}
+	if activeIdx < 0 {
+		return sorted
+	}
+	result := make([]model.GroupItem, 0, len(sorted))
+	result = append(result, sorted[activeIdx])
+	result = append(result, sorted[:activeIdx]...)
+	result = append(result, sorted[activeIdx+1:]...)
+	return result
+}
+
 // execution 保存单个客户端请求的全部可变执行状态。
 type execution struct {
 	ctx            *gin.Context       // 当前客户端请求上下文。
@@ -30,6 +67,8 @@ type execution struct {
 	log            LogRecord          // 持续更新的完整请求记录。
 	requestMetrics model.StatsMetrics // requestMetrics 累积全部真实上游调用的用量和费用。
 	attemptIndex   int                // 当前请求已经分配的最后尝试序号。
+	failedItems    map[int]struct{}   // failedItems 记录本请求已失败的 GroupItem.ID，用于候选去重。
+	lastErr        error              // lastErr 保存最近一次失败原因，全组失败时上报。
 }
 
 // HandleChatCompletions 处理 OpenAI Chat Completions 客户端请求。
@@ -47,9 +86,10 @@ func HandleMessages(c *gin.Context) {
 	(&execution{ctx: c, protocol: &relayProtocol{format: llm.APIFormatAnthropicMessage, route: "/messages", authType: httpclient.AuthTypeAPIKey, inbound: anthropic.NewInboundTransformer()}}).execute()
 }
 
-// execute 初始化请求，并在渠道未选择时等待、失败时重试，直至提交响应或客户端取消。
+// execute 初始化请求，并依次尝试分组内候选渠道，直至成功提交响应、全部失败或客户端取消。
 func (e *execution) execute() {
 	e.log = LogRecord{LogOverview: LogOverview{ID: requestIDs.Add(1), State: RequestStateRunning, StartedAt: time.Now(), ClientProtocol: e.protocol.format}}
+	e.failedItems = make(map[int]struct{})
 	ctx := e.ctx.Request.Context()
 	raw, err := httpclient.ReadHTTPRequest(e.ctx.Request)
 	if err != nil {
@@ -91,39 +131,73 @@ func (e *execution) execute() {
 			return
 		}
 
-		activeItemChanged := op.GroupActiveItemChangeSignal()
-		item, channel, key, retryInterval, retryErr := e.resolveTarget(ctx)
-		if errors.Is(retryErr, errNoActiveChannel) {
-			if e.log.Error != "" {
-				e.log.Error = ""
-				e.emit(LogEventTargetWaiting, nil)
+		group, err := op.GroupGetByName(e.request.model, ctx)
+		if err != nil {
+			e.finish(RequestStateFailed, err, nil, nil)
+			e.protocol.writeError(e.ctx, http.StatusBadRequest, err)
+			return
+		}
+		retryInterval := 1
+		if group.RetryInterval >= 1 {
+			retryInterval = group.RetryInterval
+		}
+
+		// 候选去重：跳过本请求已失败的分组项，依次尝试剩余渠道
+		var next model.GroupItem
+		for _, candidate := range orderGroupCandidates(group) {
+			if _, failed := e.failedItems[candidate.ID]; !failed {
+				next = candidate
+				break
 			}
+		}
+		if next.ID == 0 {
+			// 全部候选已失败 → 终局报错（目标2：全部失败才返回报错）
+			finalErr := e.lastErr
+			if finalErr == nil {
+				finalErr = errors.New("no available channel")
+			}
+			e.finish(RequestStateFailed, finalErr, nil, nil)
+			e.protocol.writeError(e.ctx, http.StatusBadGateway, finalErr)
+			return
+		}
+
+		channel, err := op.ChannelGet(next.ChannelID, ctx)
+		if err != nil {
+			e.failedItems[next.ID] = struct{}{}
+			e.lastErr = err
+			e.recordUnavailableTarget(next, nil, err)
+			continue
+		}
+		if !channel.Enabled {
+			err = errors.New("channel disabled")
+			e.failedItems[next.ID] = struct{}{}
+			e.lastErr = err
+			e.recordUnavailableTarget(next, channel, err)
+			continue
+		}
+		key, ok := op.ResolveChannelKey(channel, next.ModelName)
+		if !ok {
+			err = errors.New("channel has no available key")
+			e.failedItems[next.ID] = struct{}{}
+			e.lastErr = err
+			e.recordUnavailableTarget(next, channel, err)
+			continue
+		}
+
+		done, attemptErr := e.executeAttempt(ctx, next, channel, key)
+		if done {
+			return
+		}
+		if attemptErr != nil {
+			e.failedItems[next.ID] = struct{}{}
+			e.lastErr = attemptErr
 			select {
 			case <-ctx.Done():
 				e.finish(RequestStateCanceled, ctx.Err(), nil, nil)
 				return
-			case <-activeItemChanged:
+			case <-time.After(time.Duration(retryInterval) * time.Second):
 			}
 			continue
-		}
-		if retryErr != nil {
-			e.recordUnavailableTarget(item, channel, retryErr)
-		} else {
-			done, attemptErr := e.executeAttempt(ctx, item, channel, key)
-			if done {
-				return
-			}
-			retryErr = attemptErr
-		}
-
-		if retryErr == nil {
-			continue
-		}
-		select {
-		case <-ctx.Done():
-			e.finish(RequestStateCanceled, ctx.Err(), nil, nil)
-			return
-		case <-time.After(time.Duration(retryInterval) * time.Second):
 		}
 	}
 }
