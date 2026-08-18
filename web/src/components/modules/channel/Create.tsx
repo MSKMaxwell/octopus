@@ -17,6 +17,7 @@ export function CreateDialogContent() {
         type: ChannelType.OpenAIChat,
         base_url: '',
         key: '',
+        keys: [{ key: '', models: '', is_main: true }],
         custom_header: [],
         channel_proxy: '',
         param_override: '',
@@ -44,6 +45,9 @@ export function CreateDialogContent() {
                 enabled: formData.enabled,
                 base_url: formData.base_url.trim(),
                 key: formData.key.trim(),
+                keys: formData.keys
+                    .map((k) => ({ ...k, key: k.key.trim() }))
+                    .filter((k) => k.key),
                 model: formData.model,
                 custom_model: formData.custom_model,
                 proxy: formData.proxy,
@@ -60,6 +64,7 @@ export function CreateDialogContent() {
                         type: ChannelType.OpenAIChat,
                         base_url: '',
                         key: '',
+                        keys: [{ key: '', models: '', is_main: true }],
                         custom_header: [],
                         channel_proxy: '',
                         param_override: '',
