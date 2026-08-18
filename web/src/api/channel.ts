@@ -19,6 +19,12 @@ type CustomHeader = {
     header_value: string;
 };
 
+export type ChannelKey = {
+    key: string;
+    models: string;
+    is_main: boolean;
+};
+
 /**
  * 渠道完整数据（与后端 model.Channel 对齐）
  */
@@ -29,6 +35,7 @@ export type Channel = {
     enabled: boolean;
     base_url: string;
     key: string;
+    keys: ChannelKey[];
     model: string;
     custom_model: string;
     proxy: boolean;
@@ -60,6 +67,7 @@ type CreateChannelRequest = {
     enabled?: boolean;
     base_url: string;
     key: string;
+    keys?: ChannelKey[];
     model: string;
     custom_model?: string;
     proxy?: boolean;
@@ -80,6 +88,7 @@ export type UpdateChannelRequest = {
     enabled?: boolean;
     base_url?: string;
     key?: string;
+    keys?: ChannelKey[];
     model?: string;
     custom_model?: string;
     proxy?: boolean;

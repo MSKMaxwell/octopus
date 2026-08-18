@@ -34,6 +34,9 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         enabled: channel.enabled,
         base_url: channel.base_url,
         key: channel.key,
+        keys: channel.keys && channel.keys.length > 0
+            ? channel.keys
+            : [{ key: channel.key, models: '', is_main: true }],
         custom_header: channel.custom_header ?? [],
         channel_proxy: channel.channel_proxy ?? '',
         param_override: channel.param_override ?? '',
@@ -60,6 +63,14 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         if (formData.enabled !== channel.enabled) req.enabled = formData.enabled;
         if (formData.base_url.trim() !== channel.base_url) req.base_url = formData.base_url.trim();
         if (formData.key.trim() !== channel.key) req.key = formData.key.trim();
+        const cleanedKeys = formData.keys
+            .map((k) => ({ ...k, key: k.key.trim() }))
+            .filter((k) => k.key);
+        const curKeys = (channel.keys ?? []).map((k) => ({ ...k, key: k.key.trim() }));
+        if (cleanedKeys.length > 0 && JSON.stringify(cleanedKeys) !== JSON.stringify(curKeys)) {
+            req.keys = cleanedKeys;
+            delete req.key; // 后端从 Keys 镜像主 Key，避免双写冲突
+        }
         if (formData.model !== channel.model) req.model = formData.model;
         if (formData.custom_model !== channel.custom_model) req.custom_model = formData.custom_model;
         if (formData.proxy !== channel.proxy) req.proxy = formData.proxy;

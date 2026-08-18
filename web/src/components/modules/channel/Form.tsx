@@ -1,4 +1,4 @@
-import { ChannelType, type Channel, useFetchModel } from '@/api/channel';
+import { ChannelType, type Channel, type ChannelKey, useFetchModel } from '@/api/channel';
 import {
     Select,
     SelectContent,
@@ -20,6 +20,7 @@ export interface ChannelFormData {
     type: ChannelType;
     base_url: string;
     key: string;
+    keys: ChannelKey[];
     custom_header: Channel['custom_header'];
     channel_proxy: string;
     param_override: string;
@@ -89,33 +90,45 @@ export function ChannelForm({
     };
 
     const handleRefreshModels = () => {
-        if (!formData.base_url || !formData.key) return;
-        fetchModel.mutate(
-            {
-                type: formData.type,
-                base_url: formData.base_url.trim(),
-                key: formData.key.trim(),
-                proxy: formData.proxy,
-                channel_proxy: formData.channel_proxy?.trim() || null,
-                match_regex: formData.match_regex.trim() || null,
-                custom_header: formData.custom_header?.filter((h) => h.header_key.trim()) || [],
-            },
-            {
-                onSuccess: (data) => {
-                    if (data && data.length > 0) {
-                        const nextAuto = Array.from(new Set([...autoModels, ...data].map((m) => m.trim()).filter(Boolean)));
-                        updateModels(nextAuto, customModels);
-                        toast.success(t('modelRefreshSuccess'));
-                    } else {
-                        toast.warning(t('modelRefreshEmpty'));
-                    }
+        if (!formData.base_url || formData.keys.length === 0) return;
+        const doneKeys = new Set<string>();
+        for (const k of formData.keys) {
+            const trimmedKey = k.key.trim();
+            if (!trimmedKey || doneKeys.has(trimmedKey)) continue;
+            doneKeys.add(trimmedKey);
+            fetchModel.mutate(
+                {
+                    type: formData.type,
+                    base_url: formData.base_url.trim(),
+                    key: trimmedKey,
+                    proxy: formData.proxy,
+                    channel_proxy: formData.channel_proxy?.trim() || null,
+                    match_regex: formData.match_regex.trim() || null,
+                    custom_header: formData.custom_header?.filter((h) => h.header_key.trim()) || [],
                 },
-                onError: (error) => {
-                    const errorMessage = error instanceof Error ? error.message : String(error);
-                    toast.error(t('modelRefreshFailed'), { description: errorMessage });
-                },
-            }
-        );
+                {
+                    onSuccess: (data) => {
+                        if (data && data.length > 0) {
+                            const next = [...formData.keys];
+                            const keyIdx = next.findIndex((nk) => nk.key === trimmedKey);
+                            if (keyIdx >= 0) {
+                                next[keyIdx] = { ...next[keyIdx], models: data.join(',') };
+                            }
+                            const nextAuto = Array.from(new Set([...formData.model.split(',').filter(Boolean), ...data].map((m) => m.trim()).filter(Boolean)));
+                            const model = nextAuto.join(',');
+                            onFormDataChange({ ...formData, keys: next, model });
+                            toast.success(`${trimmedKey.slice(0, 8)}... ${t('modelRefreshSuccess')}`);
+                        } else {
+                            toast.warning(`${trimmedKey.slice(0, 8)}... ${t('modelRefreshEmpty')}`);
+                        }
+                    },
+                    onError: (error) => {
+                        const errorMessage = error instanceof Error ? error.message : String(error);
+                        toast.error(`${trimmedKey.slice(0, 8)}... ${t('modelRefreshFailed')}`, { description: errorMessage });
+                    },
+                }
+            );
+        }
     };
 
     const handleAddModel = (model: string) => {
@@ -223,18 +236,67 @@ export function ChannelForm({
             </div>
 
             <div className="space-y-2">
-                <label htmlFor={`${idPrefix}-key`} className="text-sm font-medium text-card-foreground">
+                <label className="text-sm font-medium text-card-foreground">
                     {t('apiKey')}
                 </label>
-                <Input
-                    id={`${idPrefix}-key`}
-                    type="text"
-                    value={formData.key}
-                    onChange={(event) => onFormDataChange({ ...formData, key: event.target.value })}
-                    placeholder={t('apiKey')}
-                    required
-                    className="rounded-xl"
-                />
+                <div className="space-y-2">
+                    {formData.keys.map((k, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                            <Input
+                                type="text"
+                                value={k.key}
+                                onChange={(e) => {
+                                    const next = [...formData.keys];
+                                    next[idx] = { ...next[idx], key: e.target.value };
+                                    onFormDataChange({ ...formData, keys: next });
+                                }}
+                                placeholder={t('apiKey')}
+                                required={idx === 0}
+                                className="rounded-xl flex-1"
+                            />
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    const next = formData.keys.map((k2, i2) => ({ ...k2, is_main: i2 === idx }));
+                                    onFormDataChange({ ...formData, keys: next, key: formData.keys[idx].key });
+                                }}
+                                className={`px-2 py-1 text-xs rounded-lg border shrink-0 ${k.is_main ? 'bg-primary text-primary-foreground border-primary' : 'bg-muted text-muted-foreground border-border'}`}
+                                title={t('mainKey')}
+                            >
+                                主
+                            </button>
+                            {formData.keys.length > 1 && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const next = formData.keys.filter((_, i) => i !== idx);
+                                        const mainIdx = next.findIndex((k2) => k2.is_main);
+                                        const newMainKey = mainIdx >= 0 ? next[mainIdx].key : (next[0]?.key ?? '');
+                                        onFormDataChange({ ...formData, keys: next, key: newMainKey });
+                                    }}
+                                    className="text-muted-foreground hover:text-destructive transition-colors shrink-0"
+                                >
+                                    <X className="h-4 w-4" />
+                                </button>
+                            )}
+                        </div>
+                    ))}
+                </div>
+                <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                        onFormDataChange({
+                            ...formData,
+                            keys: [...formData.keys, { key: '', models: '', is_main: formData.keys.length === 0 }],
+                        });
+                    }}
+                    className="h-6 px-2 text-xs text-muted-foreground/50 hover:text-muted-foreground hover:bg-transparent"
+                >
+                    <Plus className="h-3 w-3 mr-1" />
+                    添加 Key
+                </Button>
             </div>
 
             <div className="space-y-2">
@@ -245,7 +307,7 @@ export function ChannelForm({
                         variant="ghost"
                         size="sm"
                         onClick={handleRefreshModels}
-                        disabled={!formData.base_url || !formData.key || fetchModel.isPending}
+                        disabled={!formData.base_url || formData.keys.length === 0 || fetchModel.isPending}
                         className="h-6 px-2 text-xs text-muted-foreground/50 hover:text-muted-foreground hover:bg-transparent"
                     >
                         <RefreshCw className={`h-3 w-3 mr-1 ${fetchModel.isPending ? 'animate-spin' : ''}`} />

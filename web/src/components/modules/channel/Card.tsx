@@ -10,6 +10,7 @@ import { type Channel, useEnableChannel } from '@/api/channel';
 import { CardContent } from './CardContent';
 import { useTranslations } from 'use-intl';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
+import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 
@@ -50,14 +51,21 @@ export function Card({ channel, stats, layout = 'grid' }: { channel: Channel; st
             <MorphingDialogTrigger className="w-full">
                 <article className="flex flex-col gap-4 rounded-3xl border border-border bg-card text-card-foreground p-4">
                     <header className="relative flex items-center justify-between gap-2">
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                                <h3 className="text-lg font-bold truncate min-w-0">{channel.name}</h3>
-                            </TooltipTrigger>
-                            <TooltipContent key={channel.name} side="top" sideOffset={10} align="center">
-                                {channel.name}
-                            </TooltipContent>
-                        </Tooltip>
+                        <div className="flex items-center gap-2 min-w-0">
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <h3 className="text-lg font-bold truncate">{channel.name}</h3>
+                                </TooltipTrigger>
+                                <TooltipContent key={channel.name} side="top" sideOffset={10} align="center">
+                                    {channel.name}
+                                </TooltipContent>
+                            </Tooltip>
+                            {(channel.keys?.length ?? 0) > 1 && (
+                                <Badge variant="secondary" className="shrink-0 text-xs">
+                                    {(channel.keys?.length ?? 0)} Keys
+                                </Badge>
+                            )}
+                        </div>
                         <Switch
                             checked={channel.enabled}
                             onCheckedChange={handleEnableChange}
