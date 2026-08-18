@@ -33,7 +33,7 @@ type forwarder struct {
 }
 
 // executeUpstream 准备并执行上游请求，验证响应后返回上游阶段结果。
-func (f *forwarder) executeUpstream(ctx context.Context, modelName string, channel *model.Channel) upstreamResult {
+func (f *forwarder) executeUpstream(ctx context.Context, modelName string, channel *model.Channel, key string) upstreamResult {
 	passthrough := false
 	switch channel.Type {
 	case model.ChannelProviderOpenAI:
@@ -44,9 +44,9 @@ func (f *forwarder) executeUpstream(ctx context.Context, modelName string, chann
 		passthrough = f.protocol.format == llm.APIFormatAnthropicMessage
 	}
 	if passthrough {
-		return f.executePassthrough(ctx, modelName, channel)
+		return f.executePassthrough(ctx, modelName, channel, key)
 	}
-	return f.executeConverted(ctx, modelName, channel)
+	return f.executeConverted(ctx, modelName, channel, key)
 }
 
 // validateUnifiedResponse 检查需要在客户端提交前判定失败的统一响应状态。

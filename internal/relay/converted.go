@@ -37,14 +37,14 @@ type forwardMiddleware struct {
 }
 
 // executeConverted 通过 AxonHub pipeline 请求上游并在提交前验证客户端协议响应。
-func (f *forwarder) executeConverted(ctx context.Context, modelName string, channel *model.Channel) upstreamResult {
+func (f *forwarder) executeConverted(ctx context.Context, modelName string, channel *model.Channel, key string) upstreamResult {
 	raw := cloneRequest(f.request.raw, ctx)
 	request, err := f.protocol.inbound.TransformRequest(ctx, raw)
 	if err != nil {
 		return upstreamResult{err: err}
 	}
 	request.Model = modelName
-	outbound, err := newOutbound(channel.Type, channel.BaseURL, channel.Key)
+	outbound, err := newOutbound(channel.Type, channel.BaseURL, key)
 	if err != nil {
 		return upstreamResult{err: fmt.Errorf("%w: %v", errUnsupportedTarget, err)}
 	}

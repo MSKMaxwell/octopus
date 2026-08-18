@@ -35,12 +35,12 @@ type passthroughStreamResponse struct {
 }
 
 // executePassthrough 构造同协议请求并执行上游调用，在客户端提交前验证响应。
-func (f *forwarder) executePassthrough(ctx context.Context, modelName string, channel *model.Channel) upstreamResult {
-	request, err := buildPassthrough(f.protocol, f.request.raw, modelName, channel)
+func (f *forwarder) executePassthrough(ctx context.Context, modelName string, channel *model.Channel, key string) upstreamResult {
+	request, err := buildPassthrough(f.protocol, f.request.raw, modelName, channel, key)
 	if err != nil {
 		return upstreamResult{err: err}
 	}
-	outbound, err := newOutbound(channel.Type, channel.BaseURL, channel.Key)
+	outbound, err := newOutbound(channel.Type, channel.BaseURL, key)
 	if err != nil {
 		return upstreamResult{err: fmt.Errorf("%w: %v", errUnsupportedTarget, err)}
 	}
@@ -220,7 +220,7 @@ func (r *passthroughStreamResponse) Close() error {
 }
 
 // buildPassthrough 构造同协议上游请求。
-func buildPassthrough(protocol *relayProtocol, inbound *httpclient.Request, modelName string, channel *model.Channel) (*httpclient.Request, error) {
+func buildPassthrough(protocol *relayProtocol, inbound *httpclient.Request, modelName string, channel *model.Channel, key string) (*httpclient.Request, error) {
 	body, err := sjson.SetBytes(inbound.Body, "model", modelName)
 	if err != nil {
 		return nil, err
@@ -232,7 +232,7 @@ func buildPassthrough(protocol *relayProtocol, inbound *httpclient.Request, mode
 	if contentType == "" {
 		contentType = "application/json"
 	}
-	auth := &httpclient.AuthConfig{Type: protocol.authType, APIKey: channel.Key}
+	auth := &httpclient.AuthConfig{Type: protocol.authType, APIKey: key}
 	if protocol.authType == httpclient.AuthTypeAPIKey {
 		auth.HeaderKey = "X-API-Key"
 	}

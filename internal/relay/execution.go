@@ -92,7 +92,7 @@ func (e *execution) execute() {
 		}
 
 		activeItemChanged := op.GroupActiveItemChangeSignal()
-		item, channel, retryInterval, retryErr := e.resolveTarget(ctx)
+		item, channel, key, retryInterval, retryErr := e.resolveTarget(ctx)
 		if errors.Is(retryErr, errNoActiveChannel) {
 			if e.log.Error != "" {
 				e.log.Error = ""
@@ -109,7 +109,7 @@ func (e *execution) execute() {
 		if retryErr != nil {
 			e.recordUnavailableTarget(item, channel, retryErr)
 		} else {
-			done, attemptErr := e.executeAttempt(ctx, item, channel)
+			done, attemptErr := e.executeAttempt(ctx, item, channel, key)
 			if done {
 				return
 			}
@@ -128,12 +128,12 @@ func (e *execution) execute() {
 	}
 }
 
-// resolveTarget 加载请求模型对应的分组并校验当前活动渠道，返回本轮分组项、渠道和重试间隔。
-func (e *execution) resolveTarget(ctx context.Context) (model.GroupItem, *model.Channel, int, error) {
+// resolveTarget 加载请求模型对应的分组并校验当前活动渠道，返回本轮分组项、渠道、可用 Key、重试间隔和错误。
+func (e *execution) resolveTarget(ctx context.Context) (model.GroupItem, *model.Channel, string, int, error) {
 	retryInterval := 1
 	group, err := op.GroupGetByName(e.request.model, ctx)
 	if err != nil {
-		return model.GroupItem{}, nil, retryInterval, errors.New("model not found")
+		return model.GroupItem{}, nil, "", retryInterval, errors.New("model not found")
 	}
 	if group.RetryInterval >= 1 {
 		retryInterval = group.RetryInterval
@@ -141,7 +141,7 @@ func (e *execution) resolveTarget(ctx context.Context) (model.GroupItem, *model.
 
 	var item model.GroupItem
 	if group.ActiveItemID == 0 {
-		return model.GroupItem{}, nil, retryInterval, errNoActiveChannel
+		return model.GroupItem{}, nil, "", retryInterval, errNoActiveChannel
 	}
 	for _, candidate := range group.Items {
 		if candidate.ID == group.ActiveItemID {
@@ -150,23 +150,24 @@ func (e *execution) resolveTarget(ctx context.Context) (model.GroupItem, *model.
 		}
 	}
 	if item.ID == 0 {
-		return model.GroupItem{}, nil, retryInterval, errors.New("active channel not found")
+		return model.GroupItem{}, nil, "", retryInterval, errors.New("active channel not found")
 	}
 	channel, err := op.ChannelGet(item.ChannelID, ctx)
 	if err != nil {
-		return item, nil, retryInterval, errors.New("active channel not found")
+		return item, nil, "", retryInterval, errors.New("active channel not found")
 	}
 	if !channel.Enabled {
-		return item, channel, retryInterval, errors.New("active channel disabled")
+		return item, channel, "", retryInterval, errors.New("active channel disabled")
 	}
-	if channel.Key == "" {
-		return item, channel, retryInterval, errors.New("active channel has no available key")
+	key, ok := op.ResolveChannelKey(channel, item.ModelName)
+	if !ok {
+		return item, channel, "", retryInterval, errors.New("active channel has no available key")
 	}
-	return item, channel, retryInterval, nil
+	return item, channel, key, retryInterval, nil
 }
 
 // executeAttempt 执行当前渠道的一次上游尝试，提交前失败时交回外层继续重试。
-func (e *execution) executeAttempt(ctx context.Context, item model.GroupItem, channel *model.Channel) (bool, error) {
+func (e *execution) executeAttempt(ctx context.Context, item model.GroupItem, channel *model.Channel, key string) (bool, error) {
 	client, err := helper.ChannelHttpClient(channel)
 	if err != nil {
 		e.recordUnavailableTarget(item, channel, err)
@@ -176,7 +177,7 @@ func (e *execution) executeAttempt(ctx context.Context, item model.GroupItem, ch
 	defer cancelAttempt()
 	startedAt := time.Now()
 	attempt := e.startAttempt(item, channel, cancelAttempt)
-	result := (&forwarder{protocol: e.protocol, request: &e.request, client: client}).executeUpstream(attemptCtx, item.ModelName, channel)
+	result := (&forwarder{protocol: e.protocol, request: &e.request, client: client}).executeUpstream(attemptCtx, item.ModelName, channel, key)
 	interrupted := !clearAttempt(e.log.ID, attempt.Index)
 	if interrupted {
 		result.err = errors.New("relay attempt interrupted")
