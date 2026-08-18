@@ -48,3 +48,8 @@ jobs:
 
       - name: Build backend
         run: go build -trimpath -tags=jsoniter .
+
+      - name: Vet and test backend
+        run: |
+          go vet ./...
+          go test ./... -count=1
