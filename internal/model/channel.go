@@ -11,6 +11,13 @@ const (
 	ChannelProviderVolcengine      ChannelProvider = "volcengine"
 )
 
+// ChannelKey 保存渠道内单个上游凭据及其可用的模型列表。
+type ChannelKey struct {
+	Key    string `json:"key"`    // Key 是上游访问凭据。
+	Models string `json:"models"` // Models 是该 Key 自动同步/手动配置的模型列表（逗号分隔）。
+	IsMain bool   `json:"is_main"` // IsMain 表示是否为主 Key；重复模型以主 Key 为准。
+}
+
 // Channel 保存单个上游渠道的连接和转发配置。
 type Channel struct {
 	ID            int             `json:"id" gorm:"primaryKey"`                    // ID 是渠道主键。
@@ -18,7 +25,8 @@ type Channel struct {
 	Type          ChannelProvider `json:"type"`                                    // Type 是上游服务提供方。
 	Enabled       bool            `json:"enabled" gorm:"default:true"`            // Enabled 表示渠道是否可用。
 	BaseURL       string          `json:"base_url"`                                // BaseURL 是唯一的上游基础地址。
-	Key           string          `json:"key"`                                     // Key 是唯一的上游访问凭据。
+	Key           string          `json:"key"`                                     // Key 是主上游访问凭据，始终与 Keys 中主 Key 镜像。
+	Keys          []ChannelKey    `json:"keys" gorm:"serializer:json"`             // Keys 是该渠道的全部上游凭据。
 	Model         string          `json:"model"`                                   // Model 是自动同步的模型列表。
 	CustomModel   string          `json:"custom_model"`                            // CustomModel 是手动配置的模型列表。
 	Proxy         bool            `json:"proxy" gorm:"default:false"`             // Proxy 表示是否使用代理。
