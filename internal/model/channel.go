@@ -52,6 +52,7 @@ type ChannelUpdateRequest struct {
 	Enabled       *bool            `json:"enabled,omitempty"`       // Enabled 是新的启用状态。
 	BaseURL       *string          `json:"base_url,omitempty"`      // BaseURL 是新的上游基础地址。
 	Key           *string          `json:"key,omitempty"`           // Key 是新的上游访问凭据。
+	Keys          *[]ChannelKey    `json:"keys,omitempty"`          // Keys 是新的完整 Key 列表；提供时主 Key 会镜像到 Key 字段。
 	Model         *string          `json:"model,omitempty"`         // Model 是新的自动同步模型列表。
 	CustomModel   *string          `json:"custom_model,omitempty"`  // CustomModel 是新的自定义模型列表。
 	Proxy         *bool            `json:"proxy,omitempty"`         // Proxy 是新的代理开关。

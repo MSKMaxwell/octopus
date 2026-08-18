@@ -22,8 +22,31 @@ func ChannelList(ctx context.Context) ([]model.Channel, error) {
 	return channels, nil
 }
 
+// normalizeChannelKeys 归一化渠道多 Key：保证主 Key 唯一、Key 字段镜像主 Key。
+// 空 Keys 时若 Key 非空则回填为单 Key 主；无 IsMain 标记时第一个 Key 视为主 Key。
+func normalizeChannelKeys(ch *model.Channel) {
+	if len(ch.Keys) == 0 {
+		if ch.Key != "" {
+			ch.Keys = []model.ChannelKey{{Key: ch.Key, Models: ch.Model, IsMain: true}}
+		}
+		return
+	}
+	mainIdx := 0
+	for i := range ch.Keys {
+		if ch.Keys[i].IsMain {
+			mainIdx = i
+			break
+		}
+	}
+	for i := range ch.Keys {
+		ch.Keys[i].IsMain = i == mainIdx
+	}
+	ch.Key = ch.Keys[mainIdx].Key
+}
+
 // ChannelCreate 创建渠道并写入缓存。
 func ChannelCreate(channel *model.Channel, ctx context.Context) error {
+	normalizeChannelKeys(channel)
 	if err := db.GetDB().WithContext(ctx).Create(channel).Error; err != nil {
 		return err
 	}
@@ -60,6 +83,14 @@ func ChannelUpdate(req *model.ChannelUpdateRequest, ctx context.Context) (*model
 	if req.Key != nil {
 		selectFields = append(selectFields, "key")
 		updates.Key = *req.Key
+	}
+	if req.Keys != nil {
+		// 归一化主 Key 并连同 Key 列镜像一次更新，保证两列一致。
+		norm := model.Channel{Keys: *req.Keys, Model: oldChannel.Model}
+		normalizeChannelKeys(&norm)
+		selectFields = append(selectFields, "keys", "key")
+		updates.Keys = norm.Keys
+		updates.Key = norm.Key
 	}
 	if req.Model != nil {
 		selectFields = append(selectFields, "model")
