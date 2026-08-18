@@ -3,6 +3,8 @@ package helper
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -10,6 +12,16 @@ import (
 	"github.com/dlclark/regexp2"
 	"github.com/looplj/axonhub/llm/transformer"
 )
+
+// checkUpstreamStatus 校验上游响应状态码，非 2xx 时返回包含响应体的错误，
+// 避免 401/403/5xx 被当作成功响应解析成空模型列表。
+func checkUpstreamStatus(resp *http.Response) error {
+	if resp.StatusCode < http.StatusBadRequest {
+		return nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	return fmt.Errorf("upstream returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+}
 
 func FetchModels(ctx context.Context, request model.Channel) ([]string, error) {
 	client, err := ChannelHttpClient(&request)
@@ -68,6 +80,9 @@ func fetchOpenAIModels(client *http.Client, ctx context.Context, request model.C
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if err := checkUpstreamStatus(resp); err != nil {
+		return nil, err
+	}
 
 	var result model.OpenAIModelList
 
@@ -112,6 +127,9 @@ func fetchGeminiModels(client *http.Client, ctx context.Context, request model.C
 			return nil, err
 		}
 		defer resp.Body.Close()
+		if err := checkUpstreamStatus(resp); err != nil {
+			return nil, err
+		}
 
 		var result model.GeminiModelList
 
@@ -165,6 +183,9 @@ func fetchAnthropicModels(client *http.Client, ctx context.Context, request mode
 			return nil, err
 		}
 		defer resp.Body.Close()
+		if err := checkUpstreamStatus(resp); err != nil {
+			return nil, err
+		}
 
 		var result model.AnthropicModelList
 
